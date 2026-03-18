@@ -108,13 +108,22 @@
           env:
             GH_TOKEN: ${{ secrets.GH_TOKEN }}
           run: |
-            git config --global user.name 'github-actions'
-            git config --global user.email 'github-actions@github.com'
-            git add package.json
-            git commit -m "chore(release): version ${{ steps.version.outputs.new_version }}"
-            git tag v${{ steps.version.outputs.new_version }}
-            git push origin main --tags
+              git config --global user.name 'github-actions'
+              git config --global user.email 'github-actions@github.com'
+              git add package.json
+              git commit -m "chore(release): version ${{ steps.version.outputs.new_version }}" || echo "Sem mudanças para commit"
 
+              TAG="v${{ steps.version.outputs.new_version }}"
+
+              if git rev-parse "$TAG" >/dev/null 2>&1; then
+                echo "Tag já existe, pulando criação..."
+              else
+                git tag $TAG
+                git push origin $TAG
+              fi
+
+              git push origin main
+                  
         - name: Enviar email em caso de falha
           if: failure()
           uses: dawidd6/action-send-mail@v3
@@ -126,4 +135,4 @@
             subject: "Falha no CI - Projeto DevOps_ATV1"
             body: "O processo de CI falhou na branch main. Verifique os logs no GitHub Actions."
             to: ${{ secrets.EMAIL_DESTINO }}
-            from: "GitHub Actions <${{ secrets.EMAIL_ORIGEN }}>" # Ajuste aqui    
+            from: "GitHub Actions <${{ secrets.EMAIL_ORIGEN }}>"  
