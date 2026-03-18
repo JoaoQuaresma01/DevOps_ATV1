@@ -1,138 +1,146 @@
-  name: Release
+name: Release
 
-  on:
-    push:
-      branches:
-        - main
+on:
+  push:
+    branches:
+      - main
 
-  jobs:
-    version:
-      runs-on: ubuntu-latest
+permissions:
+  contents: write
 
-      steps:
-        - name: Checkout do código
-          uses: actions/checkout@v3
+jobs:
+  version:
+    runs-on: ubuntu-latest
 
-        - name: Configurar Node.js
-          uses: actions/setup-node@v2
-          with:
-            node-version: '22'
+    steps:
+      # ✅ Checkout correto (único)
+      - name: Checkout do código
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-        - name: Instalar dependências
-          run: npm install
+      # ✅ Node
+      - name: Configurar Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '22'
 
-        - name: Rodar build
-          run: npm run build
+      # ✅ Instalação
+      - name: Instalar dependências
+        run: npm install
 
-        - name: Testes unitarios
-          run: npm test    
-        #PARTE 1 - Até aqui
+      # ✅ Build
+      - name: Rodar build
+        run: npm run build
 
-        #PARTE 2 - A partir daqui (descomentar)
-        - name: Checkout do código
-          uses: actions/checkout@v2
-          with:
-            token: ${{ secrets.GH_TOKEN }}
-            fetch-depth: 0 # Buscar tags
+      # ✅ Testes
+      - name: Testes unitarios
+        run: npm test
 
+      # ================================
+      # 🔥 VERSIONAMENTO AUTOMÁTICO
+      # ================================
 
-        - name: Instalar semver
-          run: npm install -g semver
-  #
-        - name: Criar nova tag caso não exista
-          id: create_initial_tag
-          env:
-            GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          run: |
-            if [ -z "$(git tag)" ]; then
-              git config --global user.name 'github-actions'
-              git config --global user.email 'github-actions@github.com'
-              git tag -a v0.0.0 -m "Initial release"
-              git push origin v0.0.0
+      - name: Instalar semver
+        run: npm install -g semver
+
+      # ✅ Criar tag inicial se não existir
+      - name: Criar tag inicial
+        run: |
+          if [ -z "$(git tag)" ]; then
+            git config --global user.name 'github-actions'
+            git config --global user.email 'github-actions@github.com'
+            git tag -a v0.0.0 -m "Initial release"
+            git push origin v0.0.0
+          fi
+
+      # ✅ Calcular versão
+      - name: Calcular nova versão
+        id: version
+        run: |
+          git fetch --tags
+
+          LAST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
+          if [ -z "$LAST_TAG" ]; then
+            LAST_TAG="v0.0.0"
+          fi
+
+          echo "Versão atual: $LAST_TAG"
+
+          if [ "$LAST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"%s")
+          else
+            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
+          fi
+
+          echo "$COMMITS"
+
+          MAJOR=0
+          MINOR=0
+          PATCH=0
+
+          echo "$COMMITS" | while read COMMIT; do
+            if [[ "$COMMIT" == *"BREAKING CHANGE"* ]]; then
+              MAJOR=1
+            elif [[ "$COMMIT" == *"feat"* ]]; then
+              MINOR=1
+            elif [[ "$COMMIT" == *"fix"* ]]; then
+              PATCH=1
             fi
-  #
-        - name: Calcular nova versão
-          id: version
-          run: |
-            git fetch --tags
-            LAST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
-            if [ -z "$LAST_TAG" ]; then
-              LAST_TAG="v0.0.0"
-            fi
-            echo "Versão Atual: $LAST_TAG"
-            
-            if [ "$LAST_TAG" = "v0.0.0" ]; then
-              COMMITS=$(git log --pretty=format:"%s")
-            else
-              COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
-            fi
-            
-            echo "Commits desde a última tag:"
-            echo "$COMMITS"
-            
-            # Inicializando variáveis
-            MAJOR=0
-            MINOR=0
-            PATCH=0
-            
-            # Analisando mensagens de commit
-            for COMMIT in "$COMMITS"; do
-              if [[ "$COMMIT" == *"BREAKING CHANGE"* ]]; then
-                MAJOR=1
-              elif [[ "$COMMIT" == *"feat"* ]]; then
-                MINOR=1
-              elif [[ "$COMMIT" == *"fix"* ]]; then
-                PATCH=1
-              fi
-            done
-            
-            # Calculando a nova versão usando semver
-            CURRENT_VERSION=${LAST_TAG#v}
-            NEW_VERSION=$CURRENT_VERSION
-            if [[ $MAJOR -eq 1 ]]; then
-              NEW_VERSION=$(semver -i major $CURRENT_VERSION)
-            elif [[ $MINOR -eq 1 ]]; then
-              NEW_VERSION=$(semver -i minor $CURRENT_VERSION)
-            elif [[ $PATCH -eq 1 ]]; then
-              NEW_VERSION=$(semver -i patch $CURRENT_VERSION)
-            fi
-            
-            echo "Nova versão: $NEW_VERSION"
-            echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-  #
-        - name: Atualizar versão no package.json
-          run: |
-            npm version ${{ steps.version.outputs.new_version }} --no-git-tag-version
-            
-        - name: Commit e push
-          env:
-            GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          run: |
-              git config --global user.name 'github-actions'
-              git config --global user.email 'github-actions@github.com'
-              git add package.json
-              git commit -m "chore(release): version ${{ steps.version.outputs.new_version }}" || echo "Sem mudanças para commit"
+          done
 
-              TAG="v${{ steps.version.outputs.new_version }}"
+          CURRENT_VERSION=${LAST_TAG#v}
+          NEW_VERSION=$CURRENT_VERSION
 
-              if git rev-parse "$TAG" >/dev/null 2>&1; then
-                echo "Tag já existe, pulando criação..."
-              else
-                git tag $TAG
-                git push origin $TAG
-              fi
+          if [[ $MAJOR -eq 1 ]]; then
+            NEW_VERSION=$(semver -i major $CURRENT_VERSION)
+          elif [[ $MINOR -eq 1 ]]; then
+            NEW_VERSION=$(semver -i minor $CURRENT_VERSION)
+          elif [[ $PATCH -eq 1 ]]; then
+            NEW_VERSION=$(semver -i patch $CURRENT_VERSION)
+          fi
 
-              git push origin main
-                  
-        - name: Enviar email em caso de falha
-          if: failure()
-          uses: dawidd6/action-send-mail@v3
-          with:
-            server_address: smtp.gmail.com  # Servidor do Gmail
-            server_port: 587                # Porta para SSL
-            username: ${{ secrets.EMAIL_ORIGEN }}
-            password: ${{ secrets.SENHA_EMAIL }}
-            subject: "Falha no CI - Projeto DevOps_ATV1"
-            body: "O processo de CI falhou na branch main. Verifique os logs no GitHub Actions."
-            to: ${{ secrets.EMAIL_DESTINO }}
-            from: "GitHub Actions <${{ secrets.EMAIL_ORIGEN }}>"  
+          echo "Nova versão: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      # ✅ Atualizar package.json
+      - name: Atualizar versão
+        run: |
+          npm version ${{ steps.version.outputs.new_version }} --no-git-tag-version
+
+      # ✅ Commit + Tag segura (não quebra se já existir)
+      - name: Commit e push
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
+
+          git add package.json
+          git commit -m "chore(release): version ${{ steps.version.outputs.new_version }}" || echo "Sem mudanças"
+
+          TAG="v${{ steps.version.outputs.new_version }}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag já existe, pulando..."
+          else
+            git tag $TAG
+            git push origin $TAG
+          fi
+
+          git push origin main
+
+      # ================================
+      # 📧 EMAIL EM CASO DE FALHA
+      # ================================
+      - name: Enviar email em caso de falha
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_ORIGEN }}
+          password: ${{ secrets.SENHA_EMAIL }}
+          subject: "Falha no CI - Projeto DevOps_ATV1"
+          body: "O processo de CI falhou na branch main. Verifique os logs no GitHub Actions."
+          to: ${{ secrets.EMAIL_DESTINO }}
+          from: "GitHub Actions <${{ secrets.EMAIL_ORIGEN }}>"
